@@ -71,6 +71,8 @@ namespace pcl
 
   typedef IndirectArray<CAThread> thread_list;
 
+  struct FileData;
+
   class CometAlignmentInstance : public ProcessImplementation
   {
   public:
@@ -188,8 +190,9 @@ namespace pcl
 	void Save (const ImageVariant*, CAThread*, const int8);
     inline void SaveImage ( CAThread*);
     inline void InitPixelInterpolation ();
-    inline DImage GetCometImage (const String&);
+    //inline DImage GetCometImage (const String&);
     inline ImageVariant* LoadOperandImage (const String& filePath);
+	FileData* CAReadImage(ImageVariant* img, const String& path );
 
     friend class CAThread;
     friend class CometAlignmentInterface;

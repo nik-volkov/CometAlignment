@@ -161,7 +161,7 @@ bool CometAlignmentInstance::CanExecuteGlobal (String& whyNot) const
 }
 
 // ----------------------------------------------------------------------------
-/*
+
 static void ImageVariant2ImageWindow( ImageVariant* v )
 
 {
@@ -175,7 +175,7 @@ static void ImageVariant2ImageWindow( ImageVariant* v )
     w.MainView().Image().CopyImage( *v );
     w.Show();
 }
- */
+
 /*
 static void ImageVariant2ImageWindow( ImageVariant v )
 
@@ -594,10 +594,10 @@ public:
 	String monitor;		//curent processing step status
 	int monitor2;
 
-   CAThread (ImageVariant* t, FileData* fd, const String& tp, const DPoint d, const bool dzr, const Matrix m,
-             const ImageVariant* o, const CometAlignmentInstance* _instance) :
-   target (t), fileData (fd), targetPath (tp), delta (d), drizzle(dzr), drzMatrix(m), operand (o)
+   CAThread (ImageVariant* t, FileData* fd, ImageVariant* drzI, FileData* drzD, const String& tp, const DPoint d, const Matrix m, const CometAlignmentInstance* _instance) :
+   target (t), fileData (fd), drzImage(drzI), drzData(drzD), targetPath (tp), delta (d), drzMatrix(m), operand (_instance->m_OperandImage)
    {
+	   drizzle = !drzMatrix.IsEmpty();
 	   monitor = "Prepare";
 	   monitor2 = 0;
 	   i = _instance;
@@ -611,6 +611,12 @@ public:
 
       if (fileData != 0)
          delete fileData, fileData = 0;
+
+	  if (drzImage != 0)
+         delete drzImage, drzImage = 0;
+
+	  if (drzData != 0)
+         delete drzData, drzData = 0;
    }
 
    virtual void
@@ -623,6 +629,13 @@ public:
 
 		  Matrix deltaMatrix(DeltaToMatrix(delta)); //comet movement matrix
 
+		  if(!operand)
+		  {
+			  monitor = "Align Target";
+			  HomographyApplyTo(*target, deltaMatrix);
+		  }
+		  else
+			  /*
 		  if (!drizzle && !operand) //1 -> Create from StarAligned new CometAligned.img 
 		  {
 			  monitor = "Align Target";
@@ -631,12 +644,15 @@ public:
 		  else if(drizzle && !operand)//2 -> Create from NonAligned new CometAligned.img + .dzr
 		  {
 
-			  Matrix M = drzMatrix * deltaMatrix; // integrate star alignment matrix and comet movement matrix
-			  M /= M[2][2];
-			  monitor = "Align Original";
-			  HomographyApplyTo(*target, M);
+			  //Matrix M = drzMatrix * deltaMatrix; // integrate star alignment matrix and comet movement matrix
+			  //M /= M[2][2];
+			  //monitor = "Align Original";
+			  //HomographyApplyTo(*target, M);
+			  monitor = "Align Target";
+			  HomographyApplyTo(*target, deltaMatrix);
 		  }
-		  else if(!drizzle && operand)//3 -> Create from StarAligned new PureCometAligned or PureStarAligned
+		  else */
+			  if(!drizzle && operand)//3 -> Create from StarAligned new PureCometAligned or PureStarAligned
 		  {
 			  ImageVariant o;
 			  o.CopyImage (*operand); //Create local copy of Operand image
@@ -674,8 +690,10 @@ public:
 			  (*target).Truncate (); // Truncate to [0,1]
 
 		  }
-		  else if(drizzle && operand)//4 -> Create from NonAligned new PureNonAligned. Optional create PureCometAligned + .dzr and PureStarAligned + .dzr
+		  else if(drizzle && operand)//4 -> Create from NonAligned new PureStarNonAligned or PureComaNonAligned Image. 
+			  //Optional create PureCometAligned + .dzr and PureStarAligned + .dzr
 		  {
+			  //1. Create new NonAligned ---------------------------- 
 			  
 			  ImageVariant o;
 			  o.CopyImage (*operand); //Create local copy of Operand image	  
@@ -763,6 +781,11 @@ public:
       return target;
    }
 
+   const ImageVariant* DrizzleImage () const
+   {
+      return drzImage;
+   }
+
    String TargetPath () const
    {
       return targetPath;
@@ -776,6 +799,11 @@ public:
    const FileData& GetFileData () const
    {
       return *fileData;
+   }
+      
+   const FileData& GetDrzData () const
+   {
+      return *drzData;
    }
    
    DPoint Delta () const
@@ -812,6 +840,8 @@ private:
 	const CometAlignmentInstance* i; //instance
 	ImageVariant* target; // source starAligned image, or in drizzle mode the original drizzle integrable image
 	FileData* fileData; // Target image parameters and embedded data. It belongs to this thread.
+	ImageVariant* drzImage; // original drizzle integrable image
+	FileData* drzData; // original drizzle integrable image parameters and embedded data.
 	String targetPath; // path to source starAligned image, or in drizzle mode path to original drizzle integrable image
 	DPoint delta; // Comet movement Delta x, y around drzMatrix 
 	bool drizzle; // true == drizzle mode
@@ -901,10 +931,6 @@ private:
  
    void HomographyApplyTo(ImageVariant& image, const Matrix M )
 	{
-		#if debug
-		Console().Write("Homography ");
-		#endif
-		
 		if (!image.IsComplexSample ())
 		{
       if (image.IsFloatSample ())
@@ -937,7 +963,6 @@ static void LoadImageFile (GenericImage<P>& image, FileFormatInstance& file)
    if (!file.ReadImage (image))
       throw CatchedException ();
 }
-
 static void LoadImageFile (ImageVariant& v, FileFormatInstance& file, ImageOptions options)
 {
    if (!file.SelectImage (0))
@@ -960,21 +985,112 @@ static void LoadImageFile (ImageVariant& v, FileFormatInstance& file, ImageOptio
       case 32: LoadImageFile (*static_cast<UInt32Image*> (v.AnyImage ()), file);
          break;
       }
+	  
+}
+FileData* CometAlignmentInstance::CAReadImage(ImageVariant* img, const String& path)
+{
+	FileFormat format (File::ExtractExtension (path), true, false);
+	FileFormatInstance file (format);
+	ImageDescriptionArray images;
+	if ( !file.Open( images, path, p_inputHints ) ) throw CatchedException ();
+	if (images.IsEmpty ()) throw Error (path + ": Empty image file.");
+	if (images.Length () > 1) throw Error ("Multiple image files is not supported.");
+	LoadImageFile (*img, file, images[0].options);
+	//ImageVariant2ImageWindow(img); //show loaded image
+	ProcessInterface::ProcessEvents ();
+	if (m_geometry.IsRect ())
+	{
+		if (img->Bounds () != m_geometry) throw Error ("The Image geometry is not equal.");
+	}
+	else
+		m_geometry = img->Bounds ();
+	
+	FileData* inputData = new FileData(file, images[0].options);
+
+	Console().WriteLn ("Close " + path);
+	file.Close ();
+	return inputData;
+}
+static DrizzleSADataDecoder ReadDrizzleFile( const String drzFile)
+{
+	File file;
+	file.OpenForReading( drzFile );
+	fsize_type fileSize = file.Size();
+	IsoString text;
+	if ( fileSize > 0 )
+	{
+		text.Reserve( fileSize );
+		file.Read( reinterpret_cast<void*>( text.Begin() ), fileSize );
+		text[fileSize] = '\0';
+	}
+	file.Close();
+	DrizzleSAFilter filter;
+	text = filter.Filter( text );
+	if ( text.IsEmpty() )
+		throw Error( "The drizzle file has no image alignment data: " + drzFile );
+	if ( filter.HasSplines() )
+		throw Error( "Surface splines are not supported for drizzle by this version of CometAlignment: " + drzFile );
+	if ( !filter.HasMatrix() )
+		throw Error( "The drizzle file does not define an alignment matrix: " + drzFile );
+	DrizzleSADataDecoder decoder;
+	decoder.Decode( text );
+	return decoder;
 }
 
 inline thread_list CometAlignmentInstance::LoadTargetFrame (const size_t fileIndex)
 {
-	Console console;
-	const ImageItem& item = p_targetFrames[fileIndex];
-	const ImageItem& r = p_targetFrames[p_reference];
-	const DPoint delta (item.x - r.x, item.y - r.y);
-	String filePath;
-	DrizzleSADataDecoder decoder;
-	const String drzPath = item.drzPath;
-	bool drizzle(!drzPath.IsEmpty());
-	if(drizzle)
+	/*
+	read Target image
+	if .drz
 	{
-		console.WriteLn ("Use origin drizzle integrable image");
+		extract from .drz drzMatrix
+		extract from .drz drzSourcePath
+		if (operand) read drzImage(drzSourcePath)
+	}
+
+	*/
+	Console console;
+	String targetPath;
+	ImageItem& item = p_targetFrames[fileIndex];
+	ImageItem& r = p_targetFrames[p_reference];
+	DPoint delta (item.x - r.x, item.y - r.y);
+	
+	ImageVariant *drzImage;
+	FileData *targetData, *drzData;
+	thread_list threads;
+	ImageVariant* targetImage = 0;
+	drzImage = 0;
+	targetData = drzData = 0;
+
+	try
+	{
+		//read target
+		targetImage = new ImageVariant();
+		targetPath = item.path;
+		targetData = CAReadImage(targetImage, targetPath);		
+
+		//read drizzle
+		String drzSourcePath;
+		Matrix drzMatrix;
+		String drzFile = item.drzPath;
+		bool drizzle(!drzFile.IsEmpty());
+		
+		if(drizzle)
+		{ 
+			DrizzleSADataDecoder decoder;
+			decoder = ReadDrizzleFile(drzFile);
+			drzSourcePath = decoder.FilePath();
+			drzMatrix = decoder.AlignmentMatrix();
+
+			if(m_OperandImage)
+				drzData = CAReadImage(drzImage, drzSourcePath);
+		}
+		
+		threads.Add (new CAThread (targetImage, targetData, drzImage, drzData, targetPath, delta, drzMatrix, this));
+
+		/*
+
+		//console.WriteLn ("Use origin drizzle integrable image");
 		File file;
 		file.OpenForReading( drzPath );
 		fsize_type fileSize = file.Size();
@@ -996,21 +1112,21 @@ inline thread_list CometAlignmentInstance::LoadTargetFrame (const size_t fileInd
 			throw Error( "The drizzle file does not define an alignment matrix: " + drzPath );
 
 		decoder.Decode( text );
-		filePath = decoder.FilePath();
+		drzSourcePath = decoder.FilePath();
+		drzMatrix = decoder.AlignmentMatrix();
 	}
-	else
-		filePath = item.path;
-   console.WriteLn ("Open " + filePath);
+		
+   console.WriteLn ("Open " + targetPath);
 
-   FileFormat format (File::ExtractExtension (filePath), true, false);
+   FileFormat format (File::ExtractExtension (targetPath), true, false);
    FileFormatInstance file (format);
 
    ImageDescriptionArray images;
-   if ( !file.Open( images, filePath, p_inputHints ) ) throw CatchedException ();
-   if (images.IsEmpty ()) throw Error (filePath + ": Empty image file.");
+   if ( !file.Open( images, targetPath, p_inputHints ) ) throw CatchedException ();
+   if (images.IsEmpty ()) throw Error (targetPath + ": Empty image file.");
 
-   thread_list threads;
-   ImageVariant* target = new ImageVariant ();
+   
+   
    try
    {
 		if (images.Length () > 1) 
@@ -1026,17 +1142,21 @@ inline thread_list CometAlignmentInstance::LoadTargetFrame (const size_t fileInd
 			m_geometry = target->Bounds ();
 		
 		FileData* inputData = new FileData (file, images[0].options);
-		threads.Add (new CAThread (target, inputData, filePath, delta, drizzle, decoder.AlignmentMatrix(), m_OperandImage, this));
+		threads.Add (new CAThread (target, inputData, targetPath, delta, drizzle, decoder.AlignmentMatrix(), m_OperandImage, this));
 
-      console.WriteLn ("Close " + filePath);
+      console.WriteLn ("Close " + targetPath);
       file.Close ();
       console.WriteLn (String ().Format ("Delta x:%f, y:%f", delta.x, delta.y));
+	  */
 
       return threads;
    }
    catch (...)
    {
-      if (target != 0) delete target;
+      if (targetImage != 0) delete targetImage;
+	  if (targetData != 0) delete targetData;
+	  if (drzImage != 0) delete drzImage;
+	  if (drzData != 0) delete drzData;
       throw;
    }
 }
@@ -1256,6 +1376,10 @@ void CometAlignmentInstance::SaveImage ( CAThread* t)
 {	
 	Save(t->TargetImage(), t, 0);			//Save result image	
 	
+	
+	aaaa if(t->DrizzleImage())
+		Save(t->DrizzleImage(), t, 0);			//Save result new NonAligned image	
+
 	if(t->StarAligned())					//Save PureStarAligned
    {
       ImageVariant* img = new ImageVariant(t->StarAligned());
@@ -1327,25 +1451,6 @@ inline void CometAlignmentInstance::InitPixelInterpolation ()
       pixelInterpolation = new BicubicFilterPixelInterpolation (2, 2, CubicBSplineFilter ());
       break;
    }
-}
-
-inline DImage CometAlignmentInstance::GetCometImage (const String& filePath)
-{
-   Console ().WriteLn ("<end><cbr>Loading MathImage:<flash>");
-   Console ().WriteLn (filePath);
-
-   FileFormat format (File::ExtractExtension (filePath), true, false);
-   FileFormatInstance file (format);
-   ImageDescriptionArray images;
-   if ( !file.Open( images, filePath, p_inputHints ) ) throw CatchedException ();
-   if (images.IsEmpty ()) throw Error (filePath + ": Empty MathImage.");
-   if (!file.SelectImage (0))
-      throw CatchedException ();
-   DImage img;
-   if (!file.ReadImage (img)) throw CatchedException ();
-   m_geometry = img.Bounds (); //set geometry from
-   file.Close ();
-   return img;
 }
 
 inline ImageVariant* CometAlignmentInstance::LoadOperandImage (const String& filePath)
