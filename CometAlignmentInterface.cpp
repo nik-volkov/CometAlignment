@@ -1561,12 +1561,12 @@ CometAlignmentInterface::GUIData::GUIData (CometAlignmentInterface& w)
    // Subtract Section Bar & Control
    const char* ToolTipSubtract = "<p>The selected image will be subtracted from each target image.</p>"
            "<p>With <i>Comet Aligned</i> checked: Selected Operand Image (usually pure comet image) "
-               "will be aligned to comet position in every target frame and subtracted from it.</p>"
+               "will be aligned to comet position in every target frame and subtracted from it. "
+			   "Star aligned result will be saved.</p>"
            "<p>With <i>Stars Aligned</i> checked: Selected Operand Image (usually pure star field)"
 		   " will be subtracted from every target frame and result will be comet aligned to comet position in reference frame.</p>"
-			  "<p>Note: In Drizzle mode (when .dzr file added), the module uses for all manipulation original not registered images."
-			  " So we can create comet aligned image directly from non registered original, i.e. avoid double registration."
-			  " Also, if .dzr file and Operand for subtraction selected, the module will write new not registered DrizzleIntegrable original.</p>";
+			  "<p>Note: In Drizzle mode (when .dzr file added) and Operand for subtraction selected, "
+			  "the module will write processed image and new not registered DrizzleIntegrable original image.</p>";
 
    Subtract_Control.SetSizer (Subtract_Sizer);
    Subtract_SectionBar.SetTitle ("Subtract");
@@ -1618,9 +1618,14 @@ CometAlignmentInterface::GUIData::GUIData (CometAlignmentInterface& w)
    SubtractImgType_GroupBox.SetSizer( SubtractImgType_Sizer );
    //
 
+   const char* ToolTipSubtractOrigin = "<p>DrizzleIntegration and StarAlignment use different coordinate origins by design. "
+				  "The origin of coordinates in DrizzleIntegration is the center of the top left pixel. " 
+				  "The origin in StarAlignment is the top left corner of the top left pixel." 
+				  "Hence the systematic difference of 0.5 pixels. "
+				  "So, module must know: is the Operand was created in DrizzleIntegration or in ImageIintegration(StarAlignment) tools.</p>";
    
    SubtractII_RadioButton.SetText( "ImageIintegration" );
-   SubtractComet_RadioButton.SetToolTip( "The Operand image was created with ImageIintegration process." );
+   SubtractII_RadioButton.SetToolTip( "The Operand image was created with ImageIintegration process." );
    SubtractII_RadioButton.OnClick ((Button::click_event_handler) & CometAlignmentInterface::__Button_Click, w); 
 
    SubtractDI_RadioButton.SetText( "DrizzleIntegration" );
@@ -1633,7 +1638,7 @@ CometAlignmentInterface::GUIData::GUIData (CometAlignmentInterface& w)
    SubtractOrigin_Sizer.Add( SubtractDI_RadioButton );
 
    SubtractOrigin_GroupBox.SetTitle( "Operand Origin:" );
-   SubtractOrigin_GroupBox.SetToolTip(ToolTipSubtract);
+   SubtractOrigin_GroupBox.SetToolTip(ToolTipSubtractOrigin);
    SubtractOrigin_GroupBox.SetSizer( SubtractOrigin_Sizer );
 
    //
