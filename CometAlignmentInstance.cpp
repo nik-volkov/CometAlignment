@@ -626,35 +626,31 @@ public:
       {
 		  if (TryIsAborted()) 
 			  return;
-
-		  Matrix deltaMatrix(DeltaToMatrix(delta)); //comet movement matrix
-
+		  
+		  Matrix dM(DeltaToMatrix(delta)); //comet movement matrix
+		  Matrix cM(DeltaToMatrix(DPoint(0.5,0.5))); //convertion Matrix.
 		  if(!operand) 
 		  {
 			  monitor = "Align Target";
-			  HomographyApplyTo(*target, deltaMatrix);
+			  HomographyApplyTo(*target, dM); //comet movement matrix
 		  }
 		  else
-		  {			  			  
-			  if(i->p_OperandIsDI) //Operand is DrizzleIntegration
-			  {
-				  /*
-				  DrizzleIntegration and StarAlignment use different coordinate origins by design.
-				  The origin of coordinates in DI is the center of the top left pixel. 
-				  The origin in SA is the top left corner of the top left pixel. 
-				  Hence the systematic difference of 0.5 pixels. 
-				  */
-				  deltaMatrix = deltaMatrix * DeltaToMatrix(DPoint(0.5,0.5)); //add 0.5 to convert DrizzleIntegration coordinates to StarAlignment coordinates.
-				  deltaMatrix /= deltaMatrix[2][2];
-			  }
-
+		  {	
 			  ImageVariant o;
 			  o.CopyImage (*operand); //Create local copy of Operand image
 
 			  if (i->p_subtractMode) //move Operand(ComaIntegration) and subtract -> create PureStarAligned
 			  {
 				  monitor = "Align Operand";
-				  HomographyApplyTo(o, deltaMatrix.Inverse()); //Invert delta to align Operand(CometIntegration) to comet position
+				  Matrix M(dM);
+				  if(i->p_OperandIsDI) //Operand is DrizzleIntegration
+				  {
+					  //convert DrizzleIntegration coordinates to StarAlignment coordinates.
+					  M = M * cM; 
+					  M /= M[2][2];
+				  }
+				  M.Invert(); //Invert alignments direction
+				  HomographyApplyTo(o, M); //Invert delta to align Operand(CometIntegration) to comet position
 				  if (i->p_enableLinearFit)
 				  {
 					  LinearFitEngine E (i->p_rejectLow, i->p_rejectHigh);
@@ -666,6 +662,12 @@ public:
 			  }	
 			  else //subtract Operand(StarIntegration) and move to comet position -> create PureCometAligned 
 			  {
+				  if(i->p_OperandIsDI) //Operand is DrizzleIntegration
+				  { 
+					  monitor = "Align DI->SI";
+					  //convert Operand DrizzleIntegration coordinates to StarAlignment coordinates.
+					  HomographyApplyTo(o, cM.Inverse());
+				  }
 				  if (i->p_enableLinearFit)
 				  {
 					  LinearFitEngine E (i->p_rejectLow, i->p_rejectHigh);
@@ -675,7 +677,7 @@ public:
 				  Normalize (o);					  
 				  (*target) -= o; //Subtract Operand from Target Image
 				  monitor = "Align Target";
-				  HomographyApplyTo(*target, deltaMatrix); //align Result to comet position
+				  HomographyApplyTo(*target, dM); //align Result to comet position
 			  }
 			  (*target).Truncate (); // Truncate to [0,1]
 
@@ -688,7 +690,7 @@ public:
 				  Matrix M(drzMatrix); 
 				  if (i->p_subtractMode) //Mode Checked -> Operand is ComaIntegration 
 				  {
-					  M = M * deltaMatrix; // integrate star alignment matrix and comet movement matrix
+					  M = M * dM; // integrate star alignment matrix and comet movement matrix
 					  M /= M[2][2];
 				  }
 				  else  //Mode UnChecked -> Operand is StarIntegration
@@ -696,6 +698,12 @@ public:
 					  //M == drzMatrix
 				  }
 				  
+				  if(i->p_OperandIsDI) //Operand is DrizzleIntegration
+				  {  //convert DrizzleIntegration coordinates to StarAlignment coordinates.
+					  M = M * cM; 
+					  M /= M[2][2];
+				  }
+
 				  M.Invert(); //Invert alignments direction
 				  monitor = "Align Operand";
 				  HomographyApplyTo(o, M); //Align Operand to Origin drizle integrable 
@@ -780,14 +788,14 @@ public:
       drzPath = p;
    }
 
-   const FileData& GetFileData () const
+   FileData* GetFileData () const
    {
-      return *fileData;
+      return fileData;
    }
       
-   const FileData& GetDrzData () const
+   FileData* GetDrzData () const
    {
-      return *drzData;
+      return drzData;
    }
    
    DPoint Delta () const
@@ -1092,9 +1100,10 @@ inline thread_list CometAlignmentInstance::LoadTargetFrame (const size_t fileInd
 
 inline void SaveDrizzleFile( const String& i, const String& o, const Matrix& H, const int w, const int h )
 {
+	#if debug
 	Console().WriteLn ("drz Source:"+i);
 	Console().WriteLn ("drz Target:"+o);
-
+	#endif
 	if ( i == o )
       throw Error( "SaveDrizzleFile(): Internal error: Source and destination .drz files must be different." );
 	String outputDrizleFile(File::ChangeExtension (o,".drz"));
@@ -1109,10 +1118,11 @@ inline void SaveDrizzleFile( const String& i, const String& o, const Matrix& H, 
    file.OutText( IsoString( o.ToUTF8() ) );  // registration target image
    file.OutText( "}" );
    file.OutText( IsoString().Format( "D{%d,%d}", w, h ) ); // width, height
+	#if debug
    for(int i=0;i<3;i++)
 	   for(int j=0;j<3;j++)
 		   Console().WriteLn (String().Format("H[%d][%d]:%.16g",i,j,H[i][j]));
-
+	#endif
    file.OutText( IsoString().Format( "H{%.16g,%.16g,%.16g,%.16g,%.16g,%.16g,%.16g,%.16g,%.16g}",
                     H[0][0], H[0][1], H[0][2],
                     H[1][0], H[1][1], H[1][2],
@@ -1207,15 +1217,17 @@ void CometAlignmentInstance::Save(const ImageVariant* img, CAThread* t, const in
 	Console console;
 	String inputImgPath;
 	String postfix;
-	const FileData& data = t->GetFileData();
+	FileData* data;
 	if(mode == 0 )
 	{
+		data = t->GetFileData();
 		postfix = p_postfix;
 		inputImgPath = t->TargetPath();				//target source image path	
 		//data = t->GetFileData();
 	}
 	else
 	{
+		data = t->GetDrzData();
 		postfix.Clear();
 		inputImgPath = t->DrizzlePath();			//drizzle source image path	
 		//data = t->GetDrzData();
@@ -1242,15 +1254,15 @@ void CometAlignmentInstance::Save(const ImageVariant* img, CAThread* t, const in
 
 //   const FileData& data = t->GetFileData ();   
 
-   ImageOptions options = data.options; // get resolution, etc.
+   ImageOptions options = data->options; // get resolution, etc.
    outputFile.SetOptions (options);
 
-   if (data.fsData != 0)
-      if (outputFormat.ValidateFormatSpecificData (data.fsData)) outputFile.SetFormatSpecificData (data.fsData);
+   if (data->fsData != 0)
+      if (outputFormat.ValidateFormatSpecificData (data->fsData)) outputFile.SetFormatSpecificData (data->fsData);
 
    if (outputFormat.CanStoreKeywords ())
    {
-      FITSKeywordArray keywords = data.keywords;
+      FITSKeywordArray keywords = data->keywords;
       keywords.Add (FITSHeaderKeyword ("COMMENT", IsoString (), "CometAlignment with " + PixInsightVersion::AsString ()));
       keywords.Add (FITSHeaderKeyword ("COMMENT", IsoString (), "CometAlignment with " + CometAlignmentModule::ReadableVersion ()));
       if (!p_subtractFile.IsEmpty())
@@ -1277,33 +1289,41 @@ void CometAlignmentInstance::Save(const ImageVariant* img, CAThread* t, const in
 
       outputFile.Embed (keywords);
    }
-   else if (!data.keywords.IsEmpty ())
+   else if (!data->keywords.IsEmpty ())
       console.WarningLn ("** Warning: The output format cannot store FITS keywords - original keywords not embedded.");
 
-   if (data.profile.IsProfile ())
-      if (outputFormat.CanStoreICCProfiles ()) outputFile.Embed (data.profile);
+   if (data->profile.IsProfile ())
+      if (outputFormat.CanStoreICCProfiles ()) outputFile.Embed (data->profile);
       else console.WarningLn ("** Warning: The output format cannot store ICC profiles - original profile not embedded.");
 
-   if (!data.metadata.IsEmpty ())
-      if (outputFormat.CanStoreMetadata ()) outputFile.Embed (data.metadata.Begin (), data.metadata.Length ());
+   if (!data->metadata.IsEmpty ())
+      if (outputFormat.CanStoreMetadata ()) outputFile.Embed (data->metadata.Begin (), data->metadata.Length ());
       else console.WarningLn ("** Warning: The output format cannot store metadata - original metadata not embedded.");
 
    SaveImageFile (*img, outputFile);
-
-   console.WriteLn ("Close file.");
+	#if debug
+	console.WriteLn ("Close file.");
+	#endif
    outputFile.Close ();
    
-   if (mode == 0)
-   {
-	   console.WriteLn ("Update TargetPath to: " +outputImgPath);
-	   t->TargetPath(outputImgPath); //update patch to real stored image
-   }
-
-   if(drizzle && operand && mode == 1 )
-   {
-	   console.WriteLn ("Update DrizzlePath to: " +outputImgPath);
-	   t->DrizzlePath(outputImgPath); //we create new NonRegistered image -> store path to CAThread for re use in .drz file
-   }
+	if (drizzle)
+	{
+		if ( mode == 0)
+		{  
+			//update patch to real stored image name
+			#if debug
+			console.WriteLn ("Update TargetPath to: " +outputImgPath);
+			#endif
+			t->TargetPath(outputImgPath); 
+		}
+		else if( operand ) //operand && mode == 1
+		{	//we create new NonRegistered image -> store path to CAThread for re use in .drz file
+			#if debug
+			console.WriteLn ("Update DrizzlePath to: " +outputImgPath);
+			#endif
+			t->DrizzlePath(outputImgPath); 
+		}
+	}
 }
 void CometAlignmentInstance::SaveImage( CAThread* t)
 {	
@@ -1494,7 +1514,7 @@ bool CometAlignmentInstance::ExecuteGlobal ()
 	  TheCometAlignmentInterface->GUI->TargetImages_SectionBar.Hide();
 //	  const bool fullPath(TheCometAlignmentInterface->GUI->FullPaths_CheckBox.IsChecked());
    
-	  monitor.SetFixedHeight((runningThreads.Length()+3)*monitor.Font().Height()); //set monitor height according qty of runningThreads Length 
+	  monitor.SetFixedHeight((runningThreads.Length()+1)*(1.5*monitor.Font().Height())); //set monitor height according qty of runningThreads Length + 1 for header
 
 	  for(int cpu=0; cpu < int(runningThreads.Length()); cpu++)
 		  (new TreeBox::Node(monitor))->SetText (0, String (cpu));	 
