@@ -1627,7 +1627,7 @@ bool CometAlignmentInstance::ExecuteGlobal ()
                   
 				  runningThreads.Delete (i); //prepare thread for next image. now (*i == 0) the CPU is free
 				  
-				  node->SetText (0, ""); //CPU#
+				  //node->SetText (0, ""); //CPU#
 				  node->SetText (1, ""); //File	
 				  node->SetText (2, ""); //Status
 				  
