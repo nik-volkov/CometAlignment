@@ -626,7 +626,7 @@ public:
       {
 		  if (TryIsAborted()) 
 			  return;
-		  
+
 		  Matrix dM(DeltaToMatrix(delta)); //comet movement matrix
 		  Matrix cM(DeltaToMatrix(DPoint(0.5,0.5))); //convertion Matrix.
 		  if(!operand) 
